@@ -1,23 +1,26 @@
+import argparse
 import cmd
+import shlex
 import sys
 import readline
 import psutil
 import ipaddress
-import core
-import recon
+import src.core as core
+import src.recon as recon
+from src.ports_db import TCP_PORTS, UDP_PORTS
 from scapy.all import *
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich.panel import Text
-
+    
 class NetForgeCLI(cmd.Cmd):
     prompt = 'NetForge > '
     console = Console()
+    TOP_TCP_PORTS = [21, 22, 23, 25, 53, 80, 135, 139, 443, 445, 554, 3306, 3389, 8080, 8443]
     
     def __init__(self):
         super().__init__()
-        self.target = None
         self.current_subnet = core.get_local_subnet(conf.iface)
         readline.parse_and_bind("tab: complete")
         readline.parse_and_bind("set completion-query-items 0")
@@ -40,21 +43,6 @@ class NetForgeCLI(cmd.Cmd):
         self.console.print(panel)
         self.console.print("\n")   
         self.do_select_iface(None)
-        
-    def do_set_target(self, arg):
-        """Set the global target IP. Usage: set_target <IP>"""
-        if not arg:
-            self.console.print("[-] Please provide a valid IP address.", style="bold red")
-            return
-        self.target = arg
-        self.console.print(f"[+] Target successfully set to: [bold green]{self.target}[/bold green]")
-
-    def do_status(self, arg):
-        """Show current configuration status."""
-        if self.target:
-            self.console.print(f"[+] Current Target: [bold cyan]{self.target}[/bold cyan]")
-        else:
-            self.console.print("[-] No target set. Use [bold yellow]set_target[/bold yellow] first.", style="red")
 
     def do_exit(self, arg):
         """Exit NetForge."""
@@ -78,7 +66,72 @@ class NetForgeCLI(cmd.Cmd):
             index += 1
         self.console.print(table)
 
+    def parse_ports(self, port_list):
+        valid_ports = set()
+        
+        for item in port_list:
+            item = str(item).strip()
+            
+            if '-' in item:
+                try:
+                    start, end = map(int, item.split('-'))
+                    if 0 <= start <= 65535 and 0 <= end <= 65535 and start <= end:
+                        valid_ports.update(range(start, end + 1))
+                except ValueError:
+                    continue
+                    
+            elif item.isnumeric():
+                port = int(item)
+                if 0 <= port <= 65535:
+                    valid_ports.add(port)
+                    
+        return sorted(list(valid_ports))
 
+    @property
+    def tcp_scan_parser(self):
+        parser = argparse.ArgumentParser(
+            prog="tcp_scan", description="Scans for tcp open ports"
+        )
+        parser.add_argument("target", help="The target to scan")
+        parser.add_argument('-p', '--ports', help="List of ports and ranges to scan (comma separated like 80,443,100-150,25)")
+        return parser
+    
+    def do_tcp_scan(self, args):
+        args_list = shlex.split(args)
+        
+        try:
+            parsed_args = self.tcp_scan_parser.parse_args(args_list)
+        except SystemExit:
+            return
+        
+        ports = self.TOP_TCP_PORTS
+        
+        if parsed_args.ports:
+            split_list = parsed_args.ports.split(',')
+            ports = self.parse_ports(split_list)
+        
+        with self.console.status("[bold cyan]Scanning...") as status:
+            results = recon.tcp_syn_port_scan(parsed_args.target, ports)
+        
+        table = Table(title="Scan Results - OPEN PORTS", border_style="green")
+        table.add_column("Port", style="cyan", justify="center")
+        table.add_column("Name", style="blue")
+        table.add_column("Description", style="yellow")
+        
+        for port in results[True]:
+            port_data = TCP_PORTS[port]
+            try:
+                table.add_row(str(port), port_data['name'], port_data['desc'])
+            except:
+                table.add_row(str(port), 'Unknown', '')
+                
+
+        self.console.print(table)
+        self.console.print(f"\tScanned all {len(ports)}. {len(results[True])} ports were open, {len(results[False])} ports were close!", style='green')
+        
+    def help_tcp_scan(self):
+        self.tcp_scan_parser.print_help()
+        
     def _get_ipv4_address(self, addresses):
         for addr in addresses:
             if addr.family == 2:
