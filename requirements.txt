@@ -1,0 +1,5 @@
+scapy
+rich
+pyreadline3
+psutil
+ipaddress
