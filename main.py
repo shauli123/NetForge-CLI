@@ -4,6 +4,7 @@ import readline
 import psutil
 import ipaddress
 import core
+import recon
 from scapy.all import *
 from rich.console import Console
 from rich.table import Table
@@ -38,7 +39,8 @@ class NetForgeCLI(cmd.Cmd):
         self.console.print("\n")
         self.console.print(panel)
         self.console.print("\n")   
-            
+        self.do_select_iface(None)
+        
     def do_set_target(self, arg):
         """Set the global target IP. Usage: set_target <IP>"""
         if not arg:
@@ -58,6 +60,24 @@ class NetForgeCLI(cmd.Cmd):
         """Exit NetForge."""
         self.console.print("[bold magenta]Exiting NetForge. Goodbye![/bold magenta]")
         return True
+
+    def do_arp_scan(self, arg):
+        """Do a full ARP scan on current iface"""
+        with self.console.status("[bold cyan]Scanning...") as status:
+            results = recon.arp_scan(self.current_subnet)
+        
+        # set table
+        table = Table(title="Scan Results", border_style="blue")
+        table.add_column("Index", style="cyan", justify="center")
+        table.add_column("IP Address", style="green")
+        table.add_column("MAC Address", style="yellow")
+        
+        index = 1
+        for res in results:
+            table.add_row(str(index), res['ip'], res['mac'])
+            index += 1
+        self.console.print(table)
+
 
     def _get_ipv4_address(self, addresses):
         for addr in addresses:
